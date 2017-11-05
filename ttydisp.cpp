@@ -8,13 +8,30 @@
 extern "C"
 {
 #include "libavcodec/avcodec.h"
+#include "libavutil/imgutils.h"
 #include "libavformat/avformat.h"
 #include "libswscale/swscale.h"
+#include <stdio.h>
+#include <sys/ioctl.h>
+#include <unistd.h>
 }
 
 #include "logger.hpp"
 static Logger logger;
 
+/* tty dimensions */
+
+#define COLOR_TEXT_FORMAT "\x1B[48;05;%um\x1B[38;05;%um%c"
+#define COLOR_FORMAT "\x1B[48;05;%um "
+#define COLOR_RESET "\x1B[0m"
+
+std::pair<int/*width*/, int/*height*/> getTTYDimensions(void) {
+    struct winsize w;
+    ioctl(STDOUT_FILENO, TIOCGWINSZ, &w);
+    return {w.ws_col, w.ws_row};
+}
+
+/* ffmpeg abstraction */
 class Stream {
   private:
     struct av {
@@ -25,6 +42,26 @@ class Stream {
         struct SwsContext *swsContext = nullptr;
         int videoStreamIndex;
     } av;
+  protected:
+    void render(AVFrame* frame) {
+        auto [ttyWidth, ttyHeight] = getTTYDimensions();
+        int i, j;
+        for(j = 0; j < ttyHeight; ++j) {
+            for(i = 0; i < ttyWidth; ++i) {
+                int x = i * av.codecContext->width / ttyWidth;
+                int y = j * av.codecContext->height / ttyHeight;
+                uint8_t* p = frame->data[0] + y * frame->linesize[0] + x;
+                uint8_t r = *p;
+                uint8_t g = *(p+1);
+                uint8_t b = *(p+2);
+                /*
+                if(i == 0 && j == 0) {
+                    logger.log(std::to_string(r) + " " + std::to_string(g) + " " + std::to_string(b));
+                }
+                */
+            }
+        }
+    }
   public:
     std::string filename;
     int readFormat(bool verbose) {
@@ -86,6 +123,7 @@ class Stream {
         */
         return 0;
     }
+
     int display(void) {
         if(av.codec == nullptr) {
             logger.log("Attempted to display video without reading the codec first");
@@ -93,7 +131,7 @@ class Stream {
         }
         AVFrame* frame = av_frame_alloc();
         AVFrame* RGBframe = av_frame_alloc();
-        int numBytes = avpicture_get_size(AV_PIX_FMT_RGB24, av.codecContext->width, av.codecContext->height);
+        int numBytes = av_image_get_buffer_size(AV_PIX_FMT_RGB24, av.codecContext->width, av.codecContext->height, 16);
         uint8_t* buffer = (uint8_t*) av_malloc(numBytes*sizeof(uint8_t));
 
         av.swsContext =
@@ -111,24 +149,26 @@ class Stream {
              NULL
             );
 
-        avpicture_fill((AVPicture*) RGBframe, buffer, AV_PIX_FMT_RGB24, av.codecContext->width, av.codecContext->height);
+        av_image_fill_arrays(frame->data, frame->linesize, buffer, AV_PIX_FMT_RGB24, av.codecContext->width, av.codecContext->height, 1);
 
         AVPacket packet;
-        int frameFinished = 0;
         unsigned frameNum = 0;
         while(av_read_frame(av.formatContext, &packet) >= 0) {
             if(packet.stream_index != av.videoStreamIndex) continue;
 
-            logger.log("Expecting segfault");
-            // TODO: Fix this line
-            avcodec_decode_video2(av.codecContext, frame, &frameFinished, &packet);
-            logger.log("Passed segfault");
+            avcodec_send_packet(av.codecContext, &packet);
+            avcodec_receive_frame(av.codecContext, frame);
 
-            if(!frameFinished) { logger.log("Got unfinished frame"); continue; }
-            sws_scale(av.swsContext, (uint8_t const* const*) frame->data, frame->linesize, 0, av.codecContext->height, RGBframe->data, RGBframe->linesize);
-            std::cout << "Read frame " << frameNum << '\n';
+            sws_scale(av.swsContext, frame->data, frame->linesize, 0, av.codecContext->height, RGBframe->data, RGBframe->linesize);
+
+            render(RGBframe);
+
+            // logger.log("Read frame " + std::to_string(frameNum));
             frameNum++;
+            av_packet_unref(&packet);
         }
+        sws_freeContext(av.swsContext);
+        logger.log("Finished displaying");
         return 0;
     }
     Stream(std::string f) {
@@ -148,15 +188,18 @@ class Stream {
 typedef struct {
     std::string filename;
     bool verbose = false;
+    int height = -1;
+    int width = -1;
 } configType;
 
+static std::vector<std::function<int(void)>> terminationHooks;
 enum InterruptType { CONTINUE, HALT, ERROR };
 static std::unordered_map<std::string, std::function<InterruptType(int&, int, char**, configType&)>> functionMap {
     /* lambdas return 0 if no error */
-    {"-f", [](int& number, int argc, char** arguments, configType& config)
+    {"-f", [](int& argumentIndex, int argc, char** arguments, configType& config)
         {
-            if(number+1 < argc) {
-                config.filename = std::string{arguments[++number]};
+            if(argumentIndex+1 < argc) {
+                config.filename = std::string{arguments[++argumentIndex]};
                 return CONTINUE;
             }
             else {
@@ -171,11 +214,39 @@ static std::unordered_map<std::string, std::function<InterruptType(int&, int, ch
             return CONTINUE;
         }
     },
-    {"-h", [](int&, int, char**, configType&)
+    {"--help", [](int&, int, char**, configType&)
         {
             return HALT;
         }
-    }
+    }/*,
+    {"-w", [](int&, int, char**, configType& config)
+        {
+            terminationHooks.push_back([&config]()
+                {
+                    if(config.height == -1) {
+                        std::cerr << "Custom width undefined with custom height" << std::endl;
+                        return 1;
+                    }
+                    return 0;
+                }
+            );
+            return CONTINUE;
+        }
+    },
+    {"-h", [](int&, int, char**, configType&)
+        {
+            terminationHooks.push_back([](configType& config)
+                {
+                    if(config.width == -1) {
+                        std::cerr << "Custom height undefined with custom width" << std::endl;
+                        return 1;
+                    }
+                    return 0;
+                }
+            );
+            return CONTINUE;
+        }
+    }*/
 };
 std::pair<bool, configType> parseArguments(int argc, char** argv) {
     configType config;
@@ -215,6 +286,13 @@ std::pair<bool, configType> parseArguments(int argc, char** argv) {
         return {false, config};
     }
 
+    for(auto hook : terminationHooks) {
+        int err = hook();
+        if(err) {
+            std::cerr << "Error running termination hooks" << std::endl;
+        }
+    }
+
     return {true, config};
 }
 
@@ -224,7 +302,7 @@ int main(int argc, char** argv) {
         return 1;
     }
     if(config.verbose) {
-        // av_log_set_level(AV_LOG_DEBUG);
+        av_log_set_level(AV_LOG_DEBUG);
         logger.verbose = true;
     }
 
