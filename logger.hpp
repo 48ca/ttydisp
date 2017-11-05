@@ -14,7 +14,7 @@ class Logger {
     Logger() { };
     ~Logger(void) { };
 
-    bool verbose = false;
+    bool verbose = true; // default to true
 
     void log(std::string msg) {
         std::lock_guard<std::mutex> lock(mutex);

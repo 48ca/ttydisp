@@ -9,6 +9,7 @@ extern "C"
 {
 #include "libavcodec/avcodec.h"
 #include "libavformat/avformat.h"
+#include "libswscale/swscale.h"
 }
 
 #include "logger.hpp"
@@ -21,28 +22,14 @@ class Stream {
         AVCodecContext* codecContext = nullptr;
         AVFormatContext* formatContext = nullptr;
         AVDictionary* dict;
+        struct SwsContext *swsContext = nullptr;
+        int videoStreamIndex;
     } av;
   public:
     std::string filename;
-    void display(void) {
-        /*
-        logger.log("Searching for video codec");
-        av.codec = avcodec_find_decoder(AV_CODEC_ID_H264);
-        // av.codec = av_guess_format("mp4", NULL, NULL);
-        if(!av.codec) {
-            std::cerr << "Couldn't find MP4 codec" << std::endl;
-            return;
-        }
-        logger.log("Allocating context");
-        av.ctx = avcodec_alloc_context3(av.codec);
-        AVFrame* picture = av_frame_alloc();
-        if(avcodec_open2(av.ctx, av.codec, NULL) < 0) {
-            logger.log("Error opening codec");
-        }
-        */
-    }
-    int read(void) {
-        if(int err = avformat_open_input(&av.formatContext, filename.c_str(), NULL, NULL) != 0) {
+    int readFormat(bool verbose) {
+        int err = avformat_open_input(&av.formatContext, filename.c_str(), NULL, NULL);
+        if(err != 0) {
             logger.log("Error reading input from file `" + filename);
             char error[AV_ERROR_MAX_STRING_SIZE];
             av_strerror(err, error, AV_ERROR_MAX_STRING_SIZE);
@@ -51,9 +38,97 @@ class Stream {
         }
         if(avformat_find_stream_info(av.formatContext, NULL) < 0) {
             logger.log("Error finding stream info");
-            // return 1;
+            return 1;
         }
-        logger.log("Finished read");
+        if(verbose)
+            av_dump_format(av.formatContext, 0, filename.c_str(), 0);
+        return 0;
+    }
+    int readVideoCodec(void) {
+        if(av.formatContext == nullptr) {
+            std::cerr << "Tried to read video without first reading format" << std::endl;
+            return 1;
+        }
+        av.codecContext = avcodec_alloc_context3(nullptr);
+        if(!av.codecContext) {
+            logger.log("Error allocating codecc ontext");
+            return 1;
+        }
+        for(unsigned i = 0; i < av.formatContext->nb_streams; ++i) {
+            if(av.formatContext->streams[i]->codecpar->codec_type==AVMEDIA_TYPE_VIDEO) {
+                av.videoStreamIndex = i;
+                break;
+            }
+        }
+        if(av.videoStreamIndex == -1) {
+            logger.log("Could not read any video stream");
+            return 2;
+        }
+        auto stream = av.formatContext->streams[av.videoStreamIndex];
+        int ret = avcodec_parameters_to_context(av.codecContext, stream->codecpar);
+        if(ret < 0) {
+            logger.log("Error reading codec context");
+            return 3;
+        }
+        av.codec = avcodec_find_decoder(av.codecContext->codec_id);
+        if(av.codec == nullptr) {
+            logger.log("Unsupported codec");
+            return 4;
+        }
+        /*
+        logger.log("Expecting segmentation fault");
+        // TODO: Fix this line
+        if(avcodec_open2(av.codecContext, av.codec, &av.dict) < 0) {
+            logger.log("Error opening codec");
+            return 5;
+        }
+        logger.log("Passed expected segmentation fault");
+        */
+        return 0;
+    }
+    int display(void) {
+        if(av.codec == nullptr) {
+            logger.log("Attempted to display video without reading the codec first");
+            return 1;
+        }
+        AVFrame* frame = av_frame_alloc();
+        AVFrame* RGBframe = av_frame_alloc();
+        int numBytes = avpicture_get_size(AV_PIX_FMT_RGB24, av.codecContext->width, av.codecContext->height);
+        uint8_t* buffer = (uint8_t*) av_malloc(numBytes*sizeof(uint8_t));
+
+        av.swsContext =
+            sws_getContext
+            (
+             av.codecContext->width,
+             av.codecContext->height,
+             av.codecContext->pix_fmt,
+             av.codecContext->width,
+             av.codecContext->height,
+             AV_PIX_FMT_RGB24,
+             SWS_BILINEAR,
+             NULL,
+             NULL,
+             NULL
+            );
+
+        avpicture_fill((AVPicture*) RGBframe, buffer, AV_PIX_FMT_RGB24, av.codecContext->width, av.codecContext->height);
+
+        AVPacket packet;
+        int frameFinished = 0;
+        unsigned frameNum = 0;
+        while(av_read_frame(av.formatContext, &packet) >= 0) {
+            if(packet.stream_index != av.videoStreamIndex) continue;
+
+            logger.log("Expecting segfault");
+            // TODO: Fix this line
+            avcodec_decode_video2(av.codecContext, frame, &frameFinished, &packet);
+            logger.log("Passed segfault");
+
+            if(!frameFinished) { logger.log("Got unfinished frame"); continue; }
+            sws_scale(av.swsContext, (uint8_t const* const*) frame->data, frame->linesize, 0, av.codecContext->height, RGBframe->data, RGBframe->linesize);
+            std::cout << "Read frame " << frameNum << '\n';
+            frameNum++;
+        }
         return 0;
     }
     Stream(std::string f) {
@@ -72,7 +147,7 @@ class Stream {
 
 typedef struct {
     std::string filename;
-    bool verbose;
+    bool verbose = false;
 } configType;
 
 enum InterruptType { CONTINUE, HALT, ERROR };
@@ -149,7 +224,7 @@ int main(int argc, char** argv) {
         return 1;
     }
     if(config.verbose) {
-        av_log_set_level(AV_LOG_DEBUG);
+        // av_log_set_level(AV_LOG_DEBUG);
         logger.verbose = true;
     }
 
@@ -161,12 +236,16 @@ int main(int argc, char** argv) {
 
     logger.log("Reading FFMPEG codecs");
     avcodec_register_all();
+    av_register_all();
 
     Stream stream{config.filename};
-    logger.log("Reading");
-    auto readError = stream.read();
-    if(readError) logger.log("Read error");
+    logger.log("Starting reading");
 
+    int err = stream.readFormat(/*verbose*/config.verbose);
+    if(err != 0) return 1;
+    logger.log("Finished reading format");
+    err = stream.readVideoCodec();
+    logger.log("Finished reading video codec");
     stream.display();
 
     return 0;
