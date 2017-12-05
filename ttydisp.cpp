@@ -25,7 +25,14 @@ static Logger logger;
 #define COLOR_FORMAT "\x1B[48;05;%um "
 #define COLOR_RESET "\x1B[0m"
 
-std::pair<int/*width*/, int/*height*/> getTTYDimensions(void) {
+typedef struct {
+    std::string filename;
+    bool verbose = false;
+    int height = -1;
+    int width = -1;
+} configType;
+
+std::pair<unsigned/*width*/, unsigned/*height*/> getTTYDimensions(void) {
     struct winsize w;
     ioctl(STDOUT_FILENO, TIOCGWINSZ, &w);
     return {w.ws_col, w.ws_row};
@@ -43,9 +50,15 @@ class Stream {
         int videoStreamIndex;
     } av;
   protected:
-    void render(AVFrame* frame) {
-        auto [ttyWidth, ttyHeight] = getTTYDimensions();
-        int i, j;
+    unsigned char generateANSIColor(uint8_t r, uint8_t g, uint8_t b) {
+        return 16 + (36 * lround(r*5.0/256)) + (6 * lround(g*5.0/256)) + lround(b*5.0/256);
+    }
+    void resetFrame(unsigned ttyHeight) {
+        for(unsigned i = 0; i < ttyHeight - 1; ++i)
+            printf("\x1B[F");
+    }
+    void render(AVFrame* frame, unsigned ttyWidth, unsigned ttyHeight) {
+        unsigned i, j;
         for(j = 0; j < ttyHeight; ++j) {
             for(i = 0; i < ttyWidth; ++i) {
                 int x = i * av.codecContext->width / ttyWidth;
@@ -54,11 +67,16 @@ class Stream {
                 uint8_t r = *p;
                 uint8_t g = *(p+1);
                 uint8_t b = *(p+2);
-                /*
-                if(i == 0 && j == 0) {
-                    logger.log(std::to_string(r) + " " + std::to_string(g) + " " + std::to_string(b));
-                }
-                */
+
+                auto ansiColor = generateANSIColor(r, g, b);
+                printf(COLOR_FORMAT, ansiColor);
+            }
+            printf(COLOR_RESET);
+            if(i < ttyHeight - 1) {
+                printf("\n");
+            } else {
+                printf("\x1B[m");
+                fflush(stdout);
             }
         }
     }
@@ -124,7 +142,7 @@ class Stream {
         return 0;
     }
 
-    int display(void) {
+    int display(configType const& config) {
         if(av.codec == nullptr) {
             logger.log("Attempted to display video without reading the codec first");
             return 1;
@@ -134,6 +152,7 @@ class Stream {
         int numBytes = av_image_get_buffer_size(AV_PIX_FMT_RGB24, av.codecContext->width, av.codecContext->height, 16);
         uint8_t* buffer = (uint8_t*) av_malloc(numBytes*sizeof(uint8_t));
 
+        logger.log("Getting context");
         av.swsContext =
             sws_getContext
             (
@@ -148,24 +167,42 @@ class Stream {
              NULL,
              NULL
             );
-
-        av_image_fill_arrays(frame->data, frame->linesize, buffer, AV_PIX_FMT_RGB24, av.codecContext->width, av.codecContext->height, 1);
+        logger.log("Got context");
 
         AVPacket packet;
         unsigned frameNum = 0;
-        while(av_read_frame(av.formatContext, &packet) >= 0) {
+        av_init_packet(&packet);
+        while(av_read_frame(av.formatContext, &packet) >= 0)
+        {
             if(packet.stream_index != av.videoStreamIndex) continue;
+            auto [ tty_width, tty_height ] = getTTYDimensions();
+            if(frameNum) {
+                resetFrame(tty_height); // move cursor back
+            }
 
             avcodec_send_packet(av.codecContext, &packet);
             avcodec_receive_frame(av.codecContext, frame);
 
-            sws_scale(av.swsContext, frame->data, frame->linesize, 0, av.codecContext->height, RGBframe->data, RGBframe->linesize);
+            av_image_fill_arrays(frame->data, frame->linesize, buffer, AV_PIX_FMT_RGB24, av.codecContext->width, av.codecContext->height, 1);
 
-            render(RGBframe);
+            // avpicture_fill((AVPicture*) RGBframe, buffer, AV_PIX_FMT_RGB24, av.codecContext->width, av.codecContext->height);
+
+            if(config.verbose)
+                logger.log("Scaling");
+            sws_scale(av.swsContext, frame->data, frame->linesize, 0, av.codecContext->height, RGBframe->data, RGBframe->linesize);
+            if(config.verbose)
+                logger.log("Done");
+
+            if(config.verbose)
+                logger.log("Rendering");
+            render(RGBframe, tty_width, tty_height);
+            if(config.verbose)
+                logger.log("Done");
 
             // logger.log("Read frame " + std::to_string(frameNum));
             frameNum++;
             av_packet_unref(&packet);
+            // av_free_packet(&packet);
         }
         sws_freeContext(av.swsContext);
         logger.log("Finished displaying");
@@ -184,13 +221,6 @@ class Stream {
         logger.log("Stream destroyed");
     }
 };
-
-typedef struct {
-    std::string filename;
-    bool verbose = false;
-    int height = -1;
-    int width = -1;
-} configType;
 
 static std::vector<std::function<int(void)>> terminationHooks;
 enum InterruptType { CONTINUE, HALT, ERROR };
@@ -324,7 +354,7 @@ int main(int argc, char** argv) {
     logger.log("Finished reading format");
     err = stream.readVideoCodec();
     logger.log("Finished reading video codec");
-    stream.display();
+    stream.display(config);
 
     return 0;
 }

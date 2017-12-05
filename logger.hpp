@@ -25,7 +25,7 @@ class Logger {
             std::time_t now_c = std::chrono::system_clock::to_time_t(now);
             auto timestr = std::put_time(std::localtime(&now_c), "%T");
 
-            std::cout << timestr << ' ' << msg << std::endl;
+            std::cout << '[' << timestr << "] " << msg << std::endl;
         }
     };
 };
