@@ -14,7 +14,7 @@ if(MSVC)
 	endif()
 elseif(CMAKE_COMPILER_IS_GNUXX OR CMAKE_COMPILER_IS_GNUCC)
 	# GCC -- -Wall -pedantic
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra -pedantic -Wno-implicit-fallthrough")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra -pedantic -Wno-implicit-fallthrough -lasan -g")
 endif()
 
 add_executable(ttydisp ttydisp.cpp)

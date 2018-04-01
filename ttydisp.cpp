@@ -63,10 +63,18 @@ class Stream {
             for(i = 0; i < ttyWidth; ++i) {
                 int x = i * av.codecContext->width / ttyWidth;
                 int y = j * av.codecContext->height / ttyHeight;
-                uint8_t* p = frame->data[0] + y * frame->linesize[0] + x;
-                uint8_t r = *p;
-                uint8_t g = *(p+1);
-                uint8_t b = *(p+2);
+
+                // YUV
+                uint8_t Y = frame->data[0][y * frame->linesize[0] + x];
+                x/= 2;
+                y/= 2;
+                uint8_t U = frame->data[1][y * frame->linesize[1] + x];
+                uint8_t V = frame->data[2][y * frame->linesize[2] + x];
+
+                // RGB conversion
+                const uint8_t r = Y + 1.402*(V-128);
+                const uint8_t g = Y - 0.344*(U-128) - 0.714*(V-128);
+                const uint8_t b = Y + 1.772*(U-128);
 
                 auto ansiColor = generateANSIColor(r, g, b);
                 printf(COLOR_FORMAT, ansiColor);
@@ -104,9 +112,9 @@ class Stream {
             std::cerr << "Tried to read video without first reading format" << std::endl;
             return 1;
         }
-        av.codecContext = avcodec_alloc_context3(nullptr);
+        av.codecContext = avcodec_alloc_context3(av.codec);
         if(!av.codecContext) {
-            logger.log("Error allocating codecc ontext");
+            logger.log("Error allocating codec context");
             return 1;
         }
         for(unsigned i = 0; i < av.formatContext->nb_streams; ++i) {
@@ -149,7 +157,7 @@ class Stream {
         }
         AVFrame* frame = av_frame_alloc();
         AVFrame* RGBframe = av_frame_alloc();
-        int numBytes = av_image_get_buffer_size(AV_PIX_FMT_RGB24, av.codecContext->width, av.codecContext->height, 16);
+        int numBytes = av_image_get_buffer_size(AV_PIX_FMT_RGB24, av.codecContext->width, av.codecContext->height, 32);
         uint8_t* buffer = (uint8_t*) av_malloc(numBytes*sizeof(uint8_t));
 
         logger.log("Getting context");
@@ -172,6 +180,9 @@ class Stream {
         AVPacket packet;
         unsigned frameNum = 0;
         av_init_packet(&packet);
+        packet.data = NULL;
+        packet.size = 0;
+
         while(av_read_frame(av.formatContext, &packet) >= 0)
         {
             if(packet.stream_index != av.videoStreamIndex) continue;
@@ -180,22 +191,39 @@ class Stream {
                 resetFrame(tty_height); // move cursor back
             }
 
-            avcodec_send_packet(av.codecContext, &packet);
-            avcodec_receive_frame(av.codecContext, frame);
+            int ret = 0;
+            // AVERROR(EAGAIN) means that we need to feed more
+            do {
+                do {
+                    ret = avcodec_send_packet(av.codecContext, &packet);
+                } while(ret == AVERROR(EAGAIN));
 
-            av_image_fill_arrays(frame->data, frame->linesize, buffer, AV_PIX_FMT_RGB24, av.codecContext->width, av.codecContext->height, 1);
+                if(ret == AVERROR_EOF || ret == AVERROR(EINVAL)) {
+                    printf("AVERROR(EAGAIN): %d, AVERROR_EOF: %d, AVERROR(EINVAL): %d\n", AVERROR(EAGAIN), AVERROR_EOF, AVERROR(EINVAL));
+                    printf("fe_read_frame: Frame getting error (%d)!\n", ret);
+                    return 0;
+                }
 
-            // avpicture_fill((AVPicture*) RGBframe, buffer, AV_PIX_FMT_RGB24, av.codecContext->width, av.codecContext->height);
+                ret = avcodec_receive_frame(av.codecContext, frame);
+            } while(ret == AVERROR(EAGAIN));
+
+            logger.log("Reading");
+            /*
+            av_image_fill_arrays(frame->data, frame->linesize, buffer, AV_PIX_FMT_RGB24, av.codecContext->width, av.codecContext->height, 32);
+
+            avpicture_fill((AVPicture*) RGBframe, buffer, AV_PIX_FMT_RGB24, av.codecContext->width, av.codecContext->height);
 
             if(config.verbose)
                 logger.log("Scaling");
             sws_scale(av.swsContext, frame->data, frame->linesize, 0, av.codecContext->height, RGBframe->data, RGBframe->linesize);
             if(config.verbose)
                 logger.log("Done");
+            */
 
             if(config.verbose)
                 logger.log("Rendering");
-            render(RGBframe, tty_width, tty_height);
+
+            render(frame, tty_width, tty_height);
             if(config.verbose)
                 logger.log("Done");
 
