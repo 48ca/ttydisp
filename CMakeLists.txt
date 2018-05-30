@@ -3,7 +3,7 @@ project(ttydisp)
 
 set (CMAKE_CXX_STANDARD 17)
 
-include("./FindFFmpeg.cmake")
+include("./cmake/FindFFmpeg.cmake")
 
 if(MSVC)
 	# Visual Studio -- /W4

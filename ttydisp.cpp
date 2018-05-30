@@ -65,16 +65,16 @@ class Stream {
     unsigned char generateANSIColor(uint8_t r, uint8_t g, uint8_t b) {
         return 16 + (36 * lround(r*5.0/256)) + (6 * lround(g*5.0/256)) + lround(b*5.0/256);
     }
-    void resetFrame(unsigned ttyHeight) {
-        for(unsigned i = 0; i < ttyHeight - 1; ++i)
+    void resetFrame(unsigned height) {
+        for(unsigned i = 0; i < height - 1; ++i)
             printf("\x1B[F");
     }
     void render(AVFrame* frame, unsigned width, unsigned height) {
         unsigned i, j;
         for(j = 0; j < height; ++j) {
             for(i = 0; i < width; ++i) {
-                int x = round(i * (float)(av.codecContext->width / width));
-                int y = round(j * (float)(av.codecContext->height / height));
+                int x = trunc((float)i * av.codecContext->width / width);
+                int y = trunc((float)j * av.codecContext->height / height);
 
                 // YUV
                 uint8_t Y = frame->data[0][y * frame->linesize[0] + x];
@@ -92,7 +92,7 @@ class Stream {
                 printf(COLOR_FORMAT, ansiColor);
             }
             printf(COLOR_RESET);
-            if(i < height - 1) {
+            if(j < height - 1) {
                 printf("\n");
             } else {
                 printf("\x1B[m");
@@ -135,11 +135,19 @@ class Stream {
                 break;
             }
         }
-        if(av.videoStreamIndex == -1) {
+        if(av.videoStreamIndex <= 0) {
             logger.log("Could not read any video stream");
             return 2;
         }
+        if(av.formatContext->nb_streams <= (unsigned)av.videoStreamIndex) {
+            logger.log("Given video stream does not exist");
+            return 7;
+        }
         auto stream = av.formatContext->streams[av.videoStreamIndex];
+        if(!stream) {
+            logger.log("Error reading video stream");
+            return 6;
+        }
         int ret = avcodec_parameters_to_context(av.codecContext, stream->codecpar);
         if(ret < 0) {
             logger.log("Error reading codec context");
@@ -185,6 +193,7 @@ class Stream {
                 resetFrame(height); // move cursor back
             }
 
+            auto avs = clk::now();
             int ret = 0;
             // AVERROR(EAGAIN) means that we need to feed more
             do {
@@ -195,11 +204,13 @@ class Stream {
                 if(ret == AVERROR_EOF || ret == AVERROR(EINVAL)) {
                     printf("AVERROR(EAGAIN): %d, AVERROR_EOF: %d, AVERROR(EINVAL): %d\n", AVERROR(EAGAIN), AVERROR_EOF, AVERROR(EINVAL));
                     printf("fe_read_frame: Frame getting error (%d)!\n", ret);
-                    return 0;
+                    return 1;
                 }
 
                 ret = avcodec_receive_frame(av.codecContext, frame);
             } while(ret == AVERROR(EAGAIN));
+            auto ave = clk::now();
+            logger.log("Took " + std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(ave-avs).count()) + " ms to decode");
 
             if(config.verbose)
                 logger.log("Rendering frame " + std::to_string(frameNum));
@@ -244,19 +255,6 @@ class Stream {
 static std::vector<std::function<int(void)>> termination_hooks;
 enum Interrupt_t { CONTINUE, HALT, ERROR };
 static std::unordered_map<std::string, std::function<Interrupt_t(int&, int, char**, config_t&)>> functionMap {
-    /* lambdas return 0 if no error */
-    {"-f", [](int& argumentIndex, int argc, char** arguments, config_t& config)
-        {
-            if(argumentIndex+1 < argc) {
-                config.filename = std::string{arguments[++argumentIndex]};
-                return CONTINUE;
-            }
-            else {
-                std::cerr << "No argument passed to `-f' flag" << std::endl;
-                return ERROR;
-            }
-        }
-    },
     {"-v", [](int&, int, char**, config_t& config)
         {
             config.verbose = true;
@@ -265,6 +263,15 @@ static std::unordered_map<std::string, std::function<Interrupt_t(int&, int, char
     },
     {"--help", [](int&, int, char**, config_t&)
         {
+            std::cout << "usage: ttydisp [options] <filename>\n"
+                << "    -h, --help:\n"
+                << "        Show this help message\n"
+                << "    -v, --verbose:\n"
+                << "        Enable verbose logging\n"
+                << "    -w, --width:\n"
+                << "        Set output width\n"
+                << "    -h, --height:\n"
+                << "        Set output height\n";
             return HALT;
         }
     },
@@ -273,15 +280,15 @@ static std::unordered_map<std::string, std::function<Interrupt_t(int&, int, char
             if(config.width >= 0)
                 return ERROR;
 
-            if(i++ < argc) {
+            if(++i < argc) {
                 config.width = atoi(argv[i]);
-                if(std::to_string(config.width) != argv[i])
+                if(std::to_string(config.width) != argv[i] || config.width < 0)
                     return ERROR;
             } else
                 return ERROR;
             termination_hooks.emplace_back([&config]()
                 {
-                    if(config.width == -1) {
+                    if(config.width < 0) {
                         std::cerr << "Custom width undefined with custom height" << std::endl;
                         return 1;
                     }
@@ -296,15 +303,15 @@ static std::unordered_map<std::string, std::function<Interrupt_t(int&, int, char
             if(config.height >= 0)
                 return ERROR;
 
-            if(i++ < argc) {
+            if(++i < argc) {
                 config.height = atoi(argv[i]);
-                if(std::to_string(config.height) != argv[i])
+                if(std::to_string(config.height) != argv[i] || config.height < 0)
                     return ERROR;
             } else
                 return ERROR;
             termination_hooks.emplace_back([&config]()
                 {
-                    if(config.height == -1) {
+                    if(config.height < 0) {
                         std::cerr << "Custom height undefined with custom width" << std::endl;
                         return 1;
                     }
