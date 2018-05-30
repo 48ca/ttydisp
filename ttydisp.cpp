@@ -6,6 +6,7 @@
 #include <vector>
 #include <thread>
 #include <chrono>
+#include <csignal>
 
 using clk = std::chrono::steady_clock;
 
@@ -25,6 +26,8 @@ extern "C"
 #include "logger.h"
 std::ofstream of(LOG_FILENAME, std::ofstream::out);
 static Logger logger(of);
+
+static bool stop = false;
 
 /* tty dimensions */
 
@@ -92,6 +95,7 @@ class Stream {
                 printf(COLOR_FORMAT, ansiColor);
             }
             printf(COLOR_RESET);
+
             if(j < height - 1) {
                 printf("\n");
             } else {
@@ -184,7 +188,7 @@ class Stream {
 
             auto start = clk::now();
             std::chrono::nanoseconds dur((int)(1E9 * wait_time() - SPINLOCK_NS));
-            auto stop  = start + dur;
+            auto stopt  = start + dur;
 
             auto [ tty_width, tty_height ] = getTTYDimensions();
             auto height = config.height < 0 ? tty_height : config.height;
@@ -219,16 +223,19 @@ class Stream {
             if(config.verbose)
                 logger.log("Rendered frame " + std::to_string(frameNum));
 
+            if(stop) // SIGINT
+                return 1;
+
             frameNum++;
             av_packet_unref(&packet);
             auto n = clk::now();
-            if(stop < n) {
+            if(stopt < n) {
                 logger.log("Missed frame by " + std::to_string(
-                            std::chrono::duration_cast<std::chrono::milliseconds>(n - stop).count()
+                            std::chrono::duration_cast<std::chrono::milliseconds>(n - stopt).count()
                             ) + "ms");
             }
-            std::this_thread::sleep_until(stop);
-            while(stop + std::chrono::nanoseconds((int)SPINLOCK_NS) > clk::now()); // accurate waiting
+            std::this_thread::sleep_until(stopt);
+            while(stopt + std::chrono::nanoseconds((int)SPINLOCK_NS) > clk::now()); // accurate waiting
             if(config.verbose) {
                 n = clk::now();
                 std::cout << "\n file: " + config.filename + " | fps (desired): " + std::to_string(1.0/wait_time())
@@ -370,6 +377,11 @@ std::pair<bool, config_t> parseArguments(int argc, char** argv) {
     return {true, config};
 }
 
+void interrupt_handler(int) {
+    stop = true;
+    logger.log("Got SIGINT. Exiting...");
+}
+
 int main(int argc, char** argv) {
     auto [success, config] = parseArguments(argc, argv);
     if(!success) {
@@ -403,6 +415,10 @@ int main(int argc, char** argv) {
         return 1;
     }
     logger.log("Finished reading video codec");
+
+    // Capture SIGINT, finish the frame
+    signal(SIGINT, interrupt_handler);
+
     stream.display(config);
 
     return 0;
