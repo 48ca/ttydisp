@@ -4,6 +4,10 @@
 #include <fstream>
 #include <string>
 #include <vector>
+#include <thread>
+#include <chrono>
+
+using clk = std::chrono::steady_clock;
 
 extern "C"
 {
@@ -17,7 +21,8 @@ extern "C"
 }
 
 #include "logger.hpp"
-static Logger logger;
+std::ofstream of("ttydisp.log", std::ofstream::out);
+static Logger logger(of);
 
 /* tty dimensions */
 
@@ -30,7 +35,7 @@ typedef struct {
     bool verbose = false;
     int height = -1;
     int width = -1;
-} configType;
+} config_t;
 
 std::pair<unsigned/*width*/, unsigned/*height*/> getTTYDimensions(void) {
     struct winsize w;
@@ -45,11 +50,16 @@ class Stream {
         AVCodec* codec = nullptr;
         AVCodecContext* codecContext = nullptr;
         AVFormatContext* formatContext = nullptr;
-        AVDictionary* dict;
+        AVDictionary* dict = nullptr;
         struct SwsContext *swsContext = nullptr;
         int videoStreamIndex;
     } av;
   protected:
+    double wait_time() {
+        if(!av.codecContext) return 0;
+        AVRational r = av.codecContext->time_base;
+        return av_q2d(r);
+    }
     unsigned char generateANSIColor(uint8_t r, uint8_t g, uint8_t b) {
         return 16 + (36 * lround(r*5.0/256)) + (6 * lround(g*5.0/256)) + lround(b*5.0/256);
     }
@@ -57,12 +67,12 @@ class Stream {
         for(unsigned i = 0; i < ttyHeight - 1; ++i)
             printf("\x1B[F");
     }
-    void render(AVFrame* frame, unsigned ttyWidth, unsigned ttyHeight) {
+    void render(AVFrame* frame, unsigned width, unsigned height) {
         unsigned i, j;
-        for(j = 0; j < ttyHeight; ++j) {
-            for(i = 0; i < ttyWidth; ++i) {
-                int x = i * av.codecContext->width / ttyWidth;
-                int y = j * av.codecContext->height / ttyHeight;
+        for(j = 0; j < height; ++j) {
+            for(i = 0; i < width; ++i) {
+                int x = round(i * (float)(av.codecContext->width / width));
+                int y = round(j * (float)(av.codecContext->height / height));
 
                 // YUV
                 uint8_t Y = frame->data[0][y * frame->linesize[0] + x];
@@ -80,7 +90,7 @@ class Stream {
                 printf(COLOR_FORMAT, ansiColor);
             }
             printf(COLOR_RESET);
-            if(i < ttyHeight - 1) {
+            if(i < height - 1) {
                 printf("\n");
             } else {
                 printf("\x1B[m");
@@ -93,7 +103,7 @@ class Stream {
     int readFormat(bool verbose) {
         int err = avformat_open_input(&av.formatContext, filename.c_str(), NULL, NULL);
         if(err != 0) {
-            logger.log("Error reading input from file `" + filename);
+            logger.log("Error reading input from file `" + filename + "'");
             char error[AV_ERROR_MAX_STRING_SIZE];
             av_strerror(err, error, AV_ERROR_MAX_STRING_SIZE);
             logger.log(error);
@@ -138,44 +148,19 @@ class Stream {
             logger.log("Unsupported codec");
             return 4;
         }
-        /*
-        logger.log("Expecting segmentation fault");
-        // TODO: Fix this line
         if(avcodec_open2(av.codecContext, av.codec, &av.dict) < 0) {
             logger.log("Error opening codec");
             return 5;
         }
-        logger.log("Passed expected segmentation fault");
-        */
         return 0;
     }
 
-    int display(configType const& config) {
+    int display(config_t const& config) {
         if(av.codec == nullptr) {
             logger.log("Attempted to display video without reading the codec first");
             return 1;
         }
         AVFrame* frame = av_frame_alloc();
-        AVFrame* RGBframe = av_frame_alloc();
-        int numBytes = av_image_get_buffer_size(AV_PIX_FMT_RGB24, av.codecContext->width, av.codecContext->height, 32);
-        uint8_t* buffer = (uint8_t*) av_malloc(numBytes*sizeof(uint8_t));
-
-        logger.log("Getting context");
-        av.swsContext =
-            sws_getContext
-            (
-             av.codecContext->width,
-             av.codecContext->height,
-             av.codecContext->pix_fmt,
-             av.codecContext->width,
-             av.codecContext->height,
-             AV_PIX_FMT_RGB24,
-             SWS_BILINEAR,
-             NULL,
-             NULL,
-             NULL
-            );
-        logger.log("Got context");
 
         AVPacket packet;
         unsigned frameNum = 0;
@@ -186,9 +171,18 @@ class Stream {
         while(av_read_frame(av.formatContext, &packet) >= 0)
         {
             if(packet.stream_index != av.videoStreamIndex) continue;
+
+            auto start = clk::now();
+            std::chrono::nanoseconds dur((int)(1E9 * wait_time()));
+            logger.log(std::to_string(dur.count()));
+            logger.log("FPS: " + std::to_string(1.0/wait_time()));
+            auto stop  = start + dur;
+
             auto [ tty_width, tty_height ] = getTTYDimensions();
+            auto height = config.height < 0 ? tty_height : config.height;
+            auto width  = config.width  < 0 ? tty_width  : config.width;
             if(frameNum) {
-                resetFrame(tty_height); // move cursor back
+                resetFrame(height); // move cursor back
             }
 
             int ret = 0;
@@ -207,32 +201,17 @@ class Stream {
                 ret = avcodec_receive_frame(av.codecContext, frame);
             } while(ret == AVERROR(EAGAIN));
 
-            logger.log("Reading");
-            /*
-            av_image_fill_arrays(frame->data, frame->linesize, buffer, AV_PIX_FMT_RGB24, av.codecContext->width, av.codecContext->height, 32);
-
-            avpicture_fill((AVPicture*) RGBframe, buffer, AV_PIX_FMT_RGB24, av.codecContext->width, av.codecContext->height);
-
             if(config.verbose)
-                logger.log("Scaling");
-            sws_scale(av.swsContext, frame->data, frame->linesize, 0, av.codecContext->height, RGBframe->data, RGBframe->linesize);
-            if(config.verbose)
-                logger.log("Done");
-            */
+                logger.log("Rendering frame " + std::to_string(frameNum));
 
+            render(frame, width, height);
             if(config.verbose)
-                logger.log("Rendering");
+                logger.log("Rendered frame " + std::to_string(frameNum));
 
-            render(frame, tty_width, tty_height);
-            if(config.verbose)
-                logger.log("Done");
-
-            // logger.log("Read frame " + std::to_string(frameNum));
             frameNum++;
             av_packet_unref(&packet);
-            // av_free_packet(&packet);
+            std::this_thread::sleep_until(stop);
         }
-        sws_freeContext(av.swsContext);
         logger.log("Finished displaying");
         return 0;
     }
@@ -250,11 +229,11 @@ class Stream {
     }
 };
 
-static std::vector<std::function<int(void)>> terminationHooks;
-enum InterruptType { CONTINUE, HALT, ERROR };
-static std::unordered_map<std::string, std::function<InterruptType(int&, int, char**, configType&)>> functionMap {
+static std::vector<std::function<int(void)>> termination_hooks;
+enum Interrupt_t { CONTINUE, HALT, ERROR };
+static std::unordered_map<std::string, std::function<Interrupt_t(int&, int, char**, config_t&)>> functionMap {
     /* lambdas return 0 if no error */
-    {"-f", [](int& argumentIndex, int argc, char** arguments, configType& config)
+    {"-f", [](int& argumentIndex, int argc, char** arguments, config_t& config)
         {
             if(argumentIndex+1 < argc) {
                 config.filename = std::string{arguments[++argumentIndex]};
@@ -266,22 +245,31 @@ static std::unordered_map<std::string, std::function<InterruptType(int&, int, ch
             }
         }
     },
-    {"-v", [](int&, int, char**, configType& config)
+    {"-v", [](int&, int, char**, config_t& config)
         {
             config.verbose = true;
             return CONTINUE;
         }
     },
-    {"--help", [](int&, int, char**, configType&)
+    {"--help", [](int&, int, char**, config_t&)
         {
             return HALT;
         }
-    }/*,
-    {"-w", [](int&, int, char**, configType& config)
+    },
+    {"-w", [](int& i, int argc, char** argv, config_t& config)
         {
-            terminationHooks.push_back([&config]()
+            if(config.width >= 0)
+                return ERROR;
+
+            if(i++ < argc) {
+                config.width = atoi(argv[i]);
+                if(std::to_string(config.width) != argv[i])
+                    return ERROR;
+            } else
+                return ERROR;
+            termination_hooks.emplace_back([&config]()
                 {
-                    if(config.height == -1) {
+                    if(config.width == -1) {
                         std::cerr << "Custom width undefined with custom height" << std::endl;
                         return 1;
                     }
@@ -291,11 +279,20 @@ static std::unordered_map<std::string, std::function<InterruptType(int&, int, ch
             return CONTINUE;
         }
     },
-    {"-h", [](int&, int, char**, configType&)
+    {"-h", [](int& i, int argc, char** argv, config_t& config)
         {
-            terminationHooks.push_back([](configType& config)
+            if(config.height >= 0)
+                return ERROR;
+
+            if(i++ < argc) {
+                config.height = atoi(argv[i]);
+                if(std::to_string(config.height) != argv[i])
+                    return ERROR;
+            } else
+                return ERROR;
+            termination_hooks.emplace_back([&config]()
                 {
-                    if(config.width == -1) {
+                    if(config.height == -1) {
                         std::cerr << "Custom height undefined with custom width" << std::endl;
                         return 1;
                     }
@@ -304,10 +301,10 @@ static std::unordered_map<std::string, std::function<InterruptType(int&, int, ch
             );
             return CONTINUE;
         }
-    }*/
+    }
 };
-std::pair<bool, configType> parseArguments(int argc, char** argv) {
-    configType config;
+std::pair<bool, config_t> parseArguments(int argc, char** argv) {
+    config_t config;
     int i;
     // std::string executionName{argv[0]};
     for(i = 1; i < argc; ++i)
@@ -344,10 +341,10 @@ std::pair<bool, configType> parseArguments(int argc, char** argv) {
         return {false, config};
     }
 
-    for(auto hook : terminationHooks) {
-        int err = hook();
-        if(err) {
+    for(auto hook : termination_hooks) {
+        if(hook()) {
             std::cerr << "Error running termination hooks" << std::endl;
+            return {false, config};
         }
     }
 
@@ -368,19 +365,24 @@ int main(int argc, char** argv) {
         std::cout << "No file specified" << std::endl;
         return 1;
     }
-    std::cout << "Reading from file `" << config.filename << "'" << std::endl;
-
-    logger.log("Reading FFMPEG codecs");
-    avcodec_register_all();
-    av_register_all();
+    logger.log("Reading from file `" + config.filename + "'");
 
     Stream stream{config.filename};
     logger.log("Starting reading");
 
-    int err = stream.readFormat(/*verbose*/config.verbose);
-    if(err != 0) return 1;
+    int err = stream.readFormat(config.verbose);
+    if(err) {
+        std::cerr << "Error reading video format" << '\n';
+        logger.dump(std::cerr);
+        return 1;
+    }
     logger.log("Finished reading format");
     err = stream.readVideoCodec();
+    if(err) {
+        std::cerr << "Error reading video codec" << '\n';
+        logger.dump(std::cerr);
+        return 1;
+    }
     logger.log("Finished reading video codec");
     stream.display(config);
 
