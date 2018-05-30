@@ -20,8 +20,10 @@ extern "C"
 #include <unistd.h>
 }
 
-#include "logger.hpp"
-std::ofstream of("ttydisp.log", std::ofstream::out);
+#include "conf.h"
+
+#include "logger.h"
+std::ofstream of(LOG_FILENAME, std::ofstream::out);
 static Logger logger(of);
 
 /* tty dimensions */
@@ -58,7 +60,7 @@ class Stream {
     double wait_time() {
         if(!av.codecContext) return 0;
         AVRational r = av.codecContext->time_base;
-        return av_q2d(r);
+        return av_q2d(r) * std::max(av.codecContext->ticks_per_frame, 1);
     }
     unsigned char generateANSIColor(uint8_t r, uint8_t g, uint8_t b) {
         return 16 + (36 * lround(r*5.0/256)) + (6 * lround(g*5.0/256)) + lround(b*5.0/256);
@@ -173,9 +175,7 @@ class Stream {
             if(packet.stream_index != av.videoStreamIndex) continue;
 
             auto start = clk::now();
-            std::chrono::nanoseconds dur((int)(1E9 * wait_time()));
-            logger.log(std::to_string(dur.count()));
-            logger.log("FPS: " + std::to_string(1.0/wait_time()));
+            std::chrono::nanoseconds dur((int)(1E9 * wait_time() - SPINLOCK_NS));
             auto stop  = start + dur;
 
             auto [ tty_width, tty_height ] = getTTYDimensions();
@@ -204,13 +204,25 @@ class Stream {
             if(config.verbose)
                 logger.log("Rendering frame " + std::to_string(frameNum));
 
-            render(frame, width, height);
+            render(frame, width, height - (config.verbose ? 1 : 0));
             if(config.verbose)
                 logger.log("Rendered frame " + std::to_string(frameNum));
 
             frameNum++;
             av_packet_unref(&packet);
+            auto n = clk::now();
+            if(stop < n) {
+                logger.log("Missed frame by " + std::to_string(
+                            std::chrono::duration_cast<std::chrono::milliseconds>(n - stop).count()
+                            ) + "ms");
+            }
             std::this_thread::sleep_until(stop);
+            while(stop + std::chrono::nanoseconds((int)SPINLOCK_NS) > clk::now()); // accurate waiting
+            if(config.verbose) {
+                n = clk::now();
+                std::cout << "\n file: " + config.filename + " | fps (desired): " + std::to_string(1.0/wait_time())
+                    + " | fps (actual): " + std::to_string(1.0E9/std::chrono::duration_cast<std::chrono::nanoseconds>(n - start).count());
+            }
         }
         logger.log("Finished displaying");
         return 0;
@@ -357,7 +369,7 @@ int main(int argc, char** argv) {
         return 1;
     }
     if(config.verbose) {
-        av_log_set_level(AV_LOG_DEBUG);
+        // av_log_set_level(AV_LOG_DEBUG);
         logger.verbose = true;
     }
 
