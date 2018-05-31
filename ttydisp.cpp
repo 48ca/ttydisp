@@ -200,13 +200,6 @@ class Stream {
             std::chrono::nanoseconds dur((int)(1E9 * wait_time() - SPINLOCK_NS));
             auto stopt  = start + dur;
 
-            auto [ tty_width, tty_height ] = getTTYDimensions();
-            auto height = config.height < 0 ? tty_height : config.height;
-            auto width  = config.width  < 0 ? tty_width  : config.width;
-            if(frameNum) {
-                resetFrame(height); // move cursor back
-            }
-
             auto avs = clk::now();
             int ret = 0;
             // AVERROR(EAGAIN) means that we need to feed more
@@ -223,6 +216,31 @@ class Stream {
 
                 ret = avcodec_receive_frame(av.codecContext, frame);
             } while(ret == AVERROR(EAGAIN));
+
+            auto [ tty_width, tty_height ] = getTTYDimensions();
+            auto height = config.height < 0 ? tty_height : config.height;
+            auto width  = config.width  < 0 ? tty_width  : config.width;
+            float aspect = (float)(frame->height)/frame->width / 2;
+            if(config.height < 0 && config.width < 0) {
+                if((unsigned)round(aspect * width) > height) {
+                    // width is too great
+                    width = (unsigned)(height/aspect);
+                } else {
+                    // height is too great
+                    height = (unsigned)(aspect * width);
+                }
+            } else {
+                if(config.height >= 0)
+                    if(config.width < 0)
+                        width = std::min(width, (unsigned)(height/aspect));
+                if(config.height < 0)
+                    if(config.width >= 0)
+                        height = std::min(height, (unsigned)(width*aspect));
+            }
+
+            if(frameNum) {
+                resetFrame(height); // move cursor back
+            }
 
             auto ave = clk::now();
             logger.log("Took " + std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(ave-avs).count()) + " ms to decode");
