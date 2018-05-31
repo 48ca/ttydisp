@@ -71,6 +71,12 @@ class Stream {
         r = r >= pad ? r - pad : 0;
         g = g >= pad ? g - pad : 0;
         b = b >= pad ? b - pad : 0;
+        if(abs(r - g) <= GREY_DIFF && abs(r - b) <= GREY_DIFF && abs(b - g) <= GREY_DIFF) {
+            int t = r + g + b;
+            r = t/3;
+            g = r;
+            b = r;
+        }
         return 16 + (36 * lround(r*5.0/255)) + (6 * lround(g*5.0/255)) + lround(b*5.0/255);
     }
     void resetFrame(unsigned height) {
