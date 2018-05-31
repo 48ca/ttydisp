@@ -169,6 +169,53 @@ find_library( LIBAVUTIL_LIBRARY avutil
         ${KDE4_LIB_DIR}
 )
 
+################
+## libswscale  #
+################
+
+find_path( LIBSWSCALE_INCLUDE_DIR libswscale/swscale.h
+    HINTS
+        # Hints provided by pkg-config
+        ${PC_LIBSWSCALE_INCLUDEDIR}
+        ${PC_LIBSWSCALE_INCLUDEDIR}/*
+        ${PC_LIBSWSCALE_INCLUDE_DIRS}
+    PATHS
+        # Standard include directories
+        /usr/include/
+        ~/usr/include/
+        /opt/local/include/
+        /usr/local/include/
+        /opt/kde4/include/
+        ${KDE4_INCLUDE_DIR}/
+        # Search all subdirs of the above
+        /usr/include/*
+        ~/usr/include/*
+        /opt/local/include/*
+        /usr/local/include/*
+        /opt/kde4/include/*
+        ${KDE4_INCLUDE_DIR}/*
+    PATH_SUFFIXES
+        # Subdirectory hints
+        libavutil
+        ffmpeg
+        ffmpeg/libswscale
+)
+
+find_library( LIBSWSCALE_LIBRARY swscale
+    HINTS
+        # Hints provided by pkg-config
+        ${PC_LIBSWSCALE_LIBDIR}
+        ${PC_LIBSWSCALE_LIBRARY_DIRS}
+    PATHS
+        ~/usr/lib/
+        /opt/local/lib/
+        /usr/lib/
+        /usr/lib64/
+        /usr/local/lib/
+        /opt/kde4/lib/
+        ${KDE4_LIB_DIR}
+)
+
 include( FindPackageHandleStandardArgs )
 # Sets FFMPEG_FOUND to true if all of the following are set:
 #   LIBAVCODEC_INCLUDE_DIR
@@ -187,6 +234,7 @@ if( FFMPEG_FOUND )
     message( STATUS "\tlibavcodec: ${LIBAVCODEC_INCLUDE_DIR}, ${LIBAVCODEC_LIBRARY}" )
     message( STATUS "\tlibavformat: ${LIBAVFORMAT_INCLUDE_DIR}, ${LIBAVFORMAT_LIBRARY}" )
     message( STATUS "\tlibavutil: ${LIBAVUTIL_INCLUDE_DIR}, ${LIBAVUTIL_LIBRARY}" )
+    message( STATUS "\tlibswscale: ${LIBSWSCALE_INCLUDE_DIR}, ${LIBSWSCALE_LIBRARY}" )
 endif( FFMPEG_FOUND )
 
-mark_as_advanced( LIBAVCODEC_LIBRARY LIBAVFORMAT_LIBRARY LIBAVUTIL_LIBRARY )
+mark_as_advanced( LIBAVCODEC_LIBRARY LIBAVFORMAT_LIBRARY LIBAVUTIL_LIBRARY LIBSWSCALE_LIBRARY )

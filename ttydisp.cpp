@@ -57,7 +57,7 @@ class Stream {
         AVFormatContext* formatContext = nullptr;
         AVDictionary* dict = nullptr;
         struct SwsContext *swsContext = nullptr;
-        int videoStreamIndex;
+        int videoStreamIndex = -1;
     } av;
   protected:
     double wait_time() {
@@ -72,19 +72,29 @@ class Stream {
         for(unsigned i = 0; i < height - 1; ++i)
             printf("\x1B[F");
     }
-    void render(AVFrame* frame, unsigned width, unsigned height) {
-        unsigned i, j;
-        for(j = 0; j < height; ++j) {
-            for(i = 0; i < width; ++i) {
-                int x = trunc((float)i * av.codecContext->width / width);
-                int y = trunc((float)j * av.codecContext->height / height);
-
+    AVFrame* convert(AVFrame* frame, unsigned width, unsigned height) {
+        av.swsContext = sws_getCachedContext(av.swsContext, frame->width, frame->height, (AVPixelFormat)frame->format, width, height, AV_PIX_FMT_YUV420P, SWS_BICUBIC, NULL, NULL, NULL);
+        AVFrame *nframe = av_frame_alloc();
+        nframe->width = width;
+        nframe->height = height;
+        unsigned nb = av_image_get_buffer_size(AV_PIX_FMT_YUV420P, width, height, 1);
+        auto buffer = (uint8_t*)av_malloc(nb * sizeof(uint8_t));
+        av_image_fill_arrays(nframe->data, nframe->linesize, buffer, AV_PIX_FMT_YUV420P, width, height, 1);
+        sws_scale(av.swsContext, (uint8_t**)frame->data, frame->linesize, 0, frame->height, (uint8_t**)nframe->data, nframe->linesize);
+        return nframe;
+    }
+    void render(AVFrame* frame) {
+        unsigned x, y;
+        unsigned height = frame->height;
+        unsigned width = frame->width;
+        // std::cout << width <<' ' << height << std::endl;;
+        // return;
+        for(y = 0; y < height; ++y) {
+            for(x = 0; x < width; ++x) {
                 // YUV
                 uint8_t Y = frame->data[0][y * frame->linesize[0] + x];
-                x/= 2;
-                y/= 2;
-                uint8_t U = frame->data[1][y * frame->linesize[1] + x];
-                uint8_t V = frame->data[2][y * frame->linesize[2] + x];
+                uint8_t U = frame->data[1][y/2 * frame->linesize[1] + x/2];
+                uint8_t V = frame->data[2][y/2 * frame->linesize[2] + x/2];
 
                 // RGB conversion
                 const uint8_t r = Y + 1.402*(V-128);
@@ -96,7 +106,7 @@ class Stream {
             }
             printf(COLOR_RESET);
 
-            if(j < height - 1) {
+            if(y < height - 1) {
                 printf("\n");
             } else {
                 printf("\x1B[m");
@@ -139,13 +149,9 @@ class Stream {
                 break;
             }
         }
-        if(av.videoStreamIndex <= 0) {
+        if(av.videoStreamIndex < 0) {
             logger.log("Could not read any video stream");
             return 2;
-        }
-        if(av.formatContext->nb_streams <= (unsigned)av.videoStreamIndex) {
-            logger.log("Given video stream does not exist");
-            return 7;
         }
         auto stream = av.formatContext->streams[av.videoStreamIndex];
         if(!stream) {
@@ -213,18 +219,18 @@ class Stream {
 
                 ret = avcodec_receive_frame(av.codecContext, frame);
             } while(ret == AVERROR(EAGAIN));
+
             auto ave = clk::now();
             logger.log("Took " + std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(ave-avs).count()) + " ms to decode");
 
             if(config.verbose)
                 logger.log("Rendering frame " + std::to_string(frameNum));
 
-            render(frame, width, height - (config.verbose ? 1 : 0));
+            auto nf = convert(frame, width, height - (config.verbose ? 1 : 0));
+            render(nf);
+            av_frame_unref(nf);
             if(config.verbose)
                 logger.log("Rendered frame " + std::to_string(frameNum));
-
-            if(stop) // SIGINT
-                return 1;
 
             frameNum++;
             av_packet_unref(&packet);
@@ -241,6 +247,9 @@ class Stream {
                 std::cout << "\n file: " + config.filename + " | fps (desired): " + std::to_string(1.0/wait_time())
                     + " | fps (actual): " + std::to_string(1.0E9/std::chrono::duration_cast<std::chrono::nanoseconds>(n - start).count());
             }
+            if(stop) // SIGINT
+                return 1;
+
         }
         logger.log("Finished displaying");
         return 0;
@@ -254,6 +263,9 @@ class Stream {
         if(av.codec != nullptr) {
             avcodec_close(av.codecContext);
             // av_free(av.codec);
+        }
+        if(av.swsContext != nullptr) {
+            sws_freeContext(av.swsContext);
         }
         logger.log("Stream destroyed");
     }
