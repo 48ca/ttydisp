@@ -239,10 +239,10 @@ class Stream {
             } else {
                 if(config.height >= 0)
                     if(config.width < 0)
-                        width = std::min(width, (unsigned)(height/aspect));
+                        width = (unsigned)(height/aspect);
                 if(config.height < 0)
                     if(config.width >= 0)
-                        height = std::min(height, (unsigned)(width*aspect));
+                        height = (unsigned)(width*aspect);
             }
 
             if(frameNum) {
@@ -427,7 +427,7 @@ std::pair<bool, config_t> parseArguments(int argc, char** argv) {
     }
 
     if(!isatty(fileno(stdout))) {
-        if(config.height < 0 || config.width < 0) {
+        if(config.height < 0 && config.width < 0) {
             logger.log("Output is not a terminal, so custom dimensions must be set");
             return {false, config};
         }
