@@ -248,9 +248,11 @@ class Stream {
                     + " | fps (actual): " + std::to_string(1.0E9/std::chrono::duration_cast<std::chrono::nanoseconds>(n - start).count());
             }
             if(stop) // SIGINT
-                return 1;
+                goto done;
 
         }
+done:
+        puts("");
         logger.log("Finished displaying");
         return 0;
     }
@@ -394,7 +396,17 @@ void interrupt_handler(int) {
     logger.log("Got SIGINT. Exiting...");
 }
 
+void log(void*, int level, const char *fmt, va_list vargs) {
+    if(level <= 24) {
+        char message[10000] = {0};
+        // fprintf(stdout, fmt, vargs);
+        sprintf(message, fmt, vargs);
+        logger.log(message);
+    }
+}
+
 int main(int argc, char** argv) {
+    av_log_set_callback(log);
     auto [success, config] = parseArguments(argc, argv);
     if(!success) {
         return 1;
