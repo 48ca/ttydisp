@@ -29,8 +29,6 @@ static Logger logger(of);
 
 static bool stop = false;
 
-/* tty dimensions */
-
 #define COLOR_TEXT_FORMAT "\x1B[48;05;%um\x1B[38;05;%um%c"
 #define COLOR_FORMAT "\x1B[48;05;%um "
 #define COLOR_RESET "\x1B[0m"
@@ -41,6 +39,7 @@ typedef struct {
     int height = -1;
     int width = -1;
     bool loop = false;
+    uint8_t pad = 35;
 } config_t;
 
 std::pair<unsigned/*width*/, unsigned/*height*/> getTTYDimensions(void) {
@@ -61,16 +60,17 @@ class Stream {
         int videoStreamIndex = -1;
     } av;
     unsigned frameNum = 0;
+    uint8_t pad = 0;
   protected:
     double wait_time() {
         if(!av.codecContext) return 0;
         AVRational r = av.codecContext->time_base;
         return av_q2d(r) * std::max(av.codecContext->ticks_per_frame, 1);
     }
-    unsigned char generateANSIColor(uint8_t r, uint8_t g, uint8_t b) {
-        r = r >= 35 ? r - 35 : 0;
-        g = g >= 35 ? g - 35 : 0;
-        b = b >= 35 ? b - 35 : 0;
+    unsigned char generateANSIColor(uint8_t r, uint8_t g, uint8_t b, uint8_t pad) {
+        r = r >= pad ? r - pad : 0;
+        g = g >= pad ? g - pad : 0;
+        b = b >= pad ? b - pad : 0;
         return 16 + (36 * lround(r*5.0/255)) + (6 * lround(g*5.0/255)) + lround(b*5.0/255);
     }
     void resetFrame(unsigned height) {
@@ -107,7 +107,7 @@ class Stream {
                 const uint8_t g = Y - 0.344*(U-128) - 0.714*(V-128);
                 const uint8_t b = Y + 1.772*(U-128);
 
-                auto ansiColor = generateANSIColor(r, g, b);
+                auto ansiColor = generateANSIColor(r, g, b, pad);
                 printf(COLOR_FORMAT, ansiColor);
             }
             printf(COLOR_RESET);
@@ -293,9 +293,8 @@ done:
         av_frame_unref(frame);
         return 0;
     }
-    Stream(std::string f) {
+    Stream(config_t const& c) : pad(c.pad), filename(c.filename) {
         logger.log("Initializing stream");
-        filename = f;
     }
     ~Stream(void) {
         logger.log("Destructing stream");
@@ -322,6 +321,20 @@ static std::unordered_map<std::string, std::function<Interrupt_t(int&, int, char
     {"-l", [](int&, int, char**, config_t& config)
         {
             config.loop = true;
+            return CONTINUE;
+        }
+    },
+    {"-p", [](int& i, int argc, char** argv, config_t& config)
+        {
+            if(++i < argc) {
+                int p = atoi(argv[i]);
+                if(p < 0)
+                    return ERROR;
+                config.pad = (uint8_t)p;
+                if(std::to_string(config.pad) != argv[i])
+                    return ERROR;
+            } else
+                return ERROR;
             return CONTINUE;
         }
     },
@@ -473,7 +486,7 @@ int main(int argc, char** argv) {
     }
     logger.log("Reading from file `" + config.filename + "'");
 
-    Stream stream{config.filename};
+    Stream stream{config};
     logger.log("Starting reading");
 
     int err = stream.readFormat(config.verbose);
