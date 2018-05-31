@@ -213,8 +213,8 @@ class Stream {
                 } while(ret == AVERROR(EAGAIN));
 
                 if(ret == AVERROR_EOF || ret == AVERROR(EINVAL)) {
-                    printf("AVERROR(EAGAIN): %d, AVERROR_EOF: %d, AVERROR(EINVAL): %d\n", AVERROR(EAGAIN), AVERROR_EOF, AVERROR(EINVAL));
-                    printf("fe_read_frame: Frame getting error (%d)!\n", ret);
+                    fprintf(stderr, "AVERROR(EAGAIN): %d, AVERROR_EOF: %d, AVERROR(EINVAL): %d\n", AVERROR(EAGAIN), AVERROR_EOF, AVERROR(EINVAL));
+                    fprintf(stderr, "fe_read_frame: Frame getting error (%d)!\n", ret);
                     return 1;
                 }
 
@@ -243,6 +243,11 @@ class Stream {
                 if(config.height < 0)
                     if(config.width >= 0)
                         height = (unsigned)(width*aspect);
+            }
+
+            if(height <= 0 || width <= 0) {
+                std::cerr << "Got invalid dimensions" << std::endl;
+                return 1;
             }
 
             if(frameNum) {
@@ -341,7 +346,7 @@ static std::unordered_map<std::string, std::function<Interrupt_t(int&, int, char
 
             if(++i < argc) {
                 config.width = atoi(argv[i]);
-                if(std::to_string(config.width) != argv[i] || config.width < 0)
+                if(std::to_string(config.width) != argv[i] || config.width <= 0)
                     return ERROR;
             } else
                 return ERROR;
@@ -364,7 +369,7 @@ static std::unordered_map<std::string, std::function<Interrupt_t(int&, int, char
 
             if(++i < argc) {
                 config.height = atoi(argv[i]);
-                if(std::to_string(config.height) != argv[i] || config.height < 0)
+                if(std::to_string(config.height) != argv[i] || config.height <= 0)
                     return ERROR;
             } else
                 return ERROR;
