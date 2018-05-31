@@ -68,9 +68,9 @@ class Stream {
         return av_q2d(r) * std::max(av.codecContext->ticks_per_frame, 1);
     }
     unsigned char generateANSIColor(uint8_t r, uint8_t g, uint8_t b) {
-        r = std::max(r - 35, 0);
-        g = std::max(g - 35, 0);
-        b = std::max(b - 35, 0);
+        r = r >= 35 ? r - 35 : 0;
+        g = g >= 35 ? g - 35 : 0;
+        b = b >= 35 ? b - 35 : 0;
         return 16 + (36 * lround(r*5.0/255)) + (6 * lround(g*5.0/255)) + lround(b*5.0/255);
     }
     void resetFrame(unsigned height) {
@@ -443,7 +443,7 @@ void interrupt_handler(int) {
 
 void log(void*, int level, const char *fmt, va_list vargs) {
     if(level <= 24) {
-        char message[10000] = {0};
+        char message[AV_ERROR_MAX_STRING_SIZE];
         // fprintf(stdout, fmt, vargs);
         sprintf(message, fmt, vargs);
         logger.log(message);
