@@ -40,6 +40,7 @@ typedef struct {
     bool verbose = false;
     int height = -1;
     int width = -1;
+    bool loop = false;
 } config_t;
 
 std::pair<unsigned/*width*/, unsigned/*height*/> getTTYDimensions(void) {
@@ -59,6 +60,7 @@ class Stream {
         struct SwsContext *swsContext = nullptr;
         int videoStreamIndex = -1;
     } av;
+    unsigned frameNum = 0;
   protected:
     double wait_time() {
         if(!av.codecContext) return 0;
@@ -120,6 +122,9 @@ class Stream {
     }
   public:
     std::string filename;
+    AVFormatContext* getFormatContext() const {
+        return av.formatContext;
+    }
     int readFormat(bool verbose) {
         int err = avformat_open_input(&av.formatContext, filename.c_str(), NULL, NULL);
         if(err != 0) {
@@ -187,7 +192,6 @@ class Stream {
         AVFrame* frame = av_frame_alloc();
 
         AVPacket packet;
-        unsigned frameNum = 0;
         av_init_packet(&packet);
         packet.data = NULL;
         packet.size = 0;
@@ -266,8 +270,9 @@ class Stream {
             while(stopt + std::chrono::nanoseconds((int)SPINLOCK_NS) > clk::now()); // accurate waiting
             if(config.verbose) {
                 n = clk::now();
-                std::cout << "\n file: " + config.filename + " | fps (desired): " + std::to_string(1.0/wait_time())
-                    + " | fps (actual): " + std::to_string(1.0E9/std::chrono::duration_cast<std::chrono::nanoseconds>(n - start).count());
+                std::cout << "\n file: " + config.filename + " | fps (des): " + std::to_string(1.0/wait_time())
+                    + " | fps (act): " + std::to_string(1.0E9/std::chrono::duration_cast<std::chrono::nanoseconds>(n - start).count())
+                    + " | height: " + std::to_string(height) + " | width: " + std::to_string(width) + "   ";
             }
             if(stop) // SIGINT
                 goto done;
@@ -276,6 +281,8 @@ class Stream {
 done:
         puts("");
         logger.log("Finished displaying");
+        av_packet_unref(&packet);
+        av_frame_unref(frame);
         return 0;
     }
     Stream(std::string f) {
@@ -301,6 +308,12 @@ static std::unordered_map<std::string, std::function<Interrupt_t(int&, int, char
     {"-v", [](int&, int, char**, config_t& config)
         {
             config.verbose = true;
+            return CONTINUE;
+        }
+    },
+    {"-l", [](int&, int, char**, config_t& config)
+        {
+            config.loop = true;
             return CONTINUE;
         }
     },
@@ -473,7 +486,11 @@ int main(int argc, char** argv) {
     // Capture SIGINT, finish the frame
     signal(SIGINT, interrupt_handler);
 
-    stream.display(config);
+    int ret;
+    do {
+        ret = stream.display(config);
+        av_seek_frame(stream.getFormatContext(), -1, 0, AVSEEK_FLAG_FRAME);
+    } while(config.loop && !ret && !stop);
 
     return 0;
 }
