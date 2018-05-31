@@ -222,6 +222,9 @@ class Stream {
             } while(ret == AVERROR(EAGAIN));
 
             auto [ tty_width, tty_height ] = getTTYDimensions();
+            if(config.verbose)
+                tty_height -= 1;
+
             auto height = config.height < 0 ? tty_height : config.height;
             auto width  = config.width  < 0 ? tty_width  : config.width;
             float aspect = (float)(frame->height)/frame->width / 2;
@@ -243,7 +246,7 @@ class Stream {
             }
 
             if(frameNum) {
-                resetFrame(height); // move cursor back
+                resetFrame(height + (config.verbose ? 1 : 0)); // move cursor back
             }
 
             auto ave = clk::now();
@@ -252,7 +255,7 @@ class Stream {
             if(config.verbose)
                 logger.log("Rendering frame " + std::to_string(frameNum));
 
-            auto nf = convert(frame, width, height - (config.verbose ? 1 : 0));
+            auto nf = convert(frame, width, height);
             render(nf);
             av_frame_unref(nf);
             if(config.verbose)
