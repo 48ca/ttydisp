@@ -66,7 +66,10 @@ class Stream {
         return av_q2d(r) * std::max(av.codecContext->ticks_per_frame, 1);
     }
     unsigned char generateANSIColor(uint8_t r, uint8_t g, uint8_t b) {
-        return 16 + (36 * lround(r*5.0/256)) + (6 * lround(g*5.0/256)) + lround(b*5.0/256);
+        r = std::max(r - 35, 0);
+        g = std::max(g - 35, 0);
+        b = std::max(b - 35, 0);
+        return 16 + (36 * lround(r*5.0/255)) + (6 * lround(g*5.0/255)) + lround(b*5.0/255);
     }
     void resetFrame(unsigned height) {
         for(unsigned i = 0; i < height - 1; ++i)
