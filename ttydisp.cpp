@@ -74,6 +74,7 @@ class Stream {
     }
     AVFrame* convert(AVFrame* frame, unsigned width, unsigned height) {
         av.swsContext = sws_getCachedContext(av.swsContext, frame->width, frame->height, (AVPixelFormat)frame->format, width, height, AV_PIX_FMT_YUV420P, SWS_BICUBIC, NULL, NULL, NULL);
+        logger.log("Scaling to dims " + std::to_string(width) + ", " + std::to_string(height));
         AVFrame *nframe = av_frame_alloc();
         nframe->width = width;
         nframe->height = height;
@@ -388,6 +389,13 @@ std::pair<bool, config_t> parseArguments(int argc, char** argv) {
         }
     }
 
+    if(!isatty(fileno(stdout))) {
+        if(config.height < 0 || config.width < 0) {
+            logger.log("Output is not a terminal, so custom dimensions must be set");
+            return {false, config};
+        }
+    }
+
     return {true, config};
 }
 
@@ -409,6 +417,7 @@ int main(int argc, char** argv) {
     av_log_set_callback(log);
     auto [success, config] = parseArguments(argc, argv);
     if(!success) {
+        logger.dump(std::cerr);
         return 1;
     }
     if(config.verbose) {
