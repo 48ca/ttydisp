@@ -3,7 +3,11 @@ project(ttydisp)
 
 set (CMAKE_CXX_STANDARD 17)
 
-include("./cmake/FindFFmpeg.cmake")
+include("./cmake/ffmpeg-config.cmake")
+include("./cmake/libvdpau-config.cmake")
+find_package(X11)
+find_package(Threads)
+find_package(ZLIB)
 
 if(MSVC)
 	# Visual Studio -- /W4
@@ -20,5 +24,9 @@ endif()
 add_executable(ttydisp ttydisp.cpp)
 target_include_directories( ttydisp PRIVATE ${LIBAVFORMAT_INCLUDE_DIR} ${LIBAVCODEC_INCLUDE_DIR} ${LIBAVUTIL_INCLUDE_DIR} ${LIBSWSCALE_INCLUDE_DIR})
 target_link_libraries(ttydisp ${LIBAVFORMAT_LIBRARY} ${LIBAVCODEC_LIBRARY} ${LIBAVUTIL_LIBRARY} ${LIBSWSCALE_LIBRARY} )
+target_link_libraries(ttydisp ${LIBVDPAU_LIBRARY})
+target_link_libraries(ttydisp ${X11_LIBRARIES})
+target_link_libraries(ttydisp ${CMAKE_THREAD_LIBS_INIT})
+target_link_libraries(ttydisp ${ZLIB_LIBRARIES})
 
 install(TARGETS ttydisp DESTINATION bin)
