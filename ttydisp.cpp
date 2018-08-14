@@ -44,7 +44,10 @@ typedef struct {
     int width = -1;
     bool loop = false;
     uint8_t pad = 35;
+    uint16_t fps = 0;
 } config_t;
+
+static config_t config;
 
 std::pair<unsigned/*width*/, unsigned/*height*/> getTTYDimensions(void) {
     struct winsize w;
@@ -68,6 +71,9 @@ class Stream {
   protected:
     double wait_time() {
         if(!av.codecContext) return 0;
+        if(config.fps != 0) {
+            return 1.0/config.fps;
+        }
         AVRational r = av.codecContext->time_base;
         return av_q2d(r) * std::max(av.codecContext->ticks_per_frame, 1);
     }
@@ -194,7 +200,7 @@ class Stream {
         return 0;
     }
 
-    int display(config_t const& config) {
+    int display() {
         if(av.codec == nullptr) {
             logger.log("Attempted to display video without reading the codec first");
             return 1;
@@ -328,6 +334,17 @@ static std::unordered_map<std::string, std::function<Interrupt_t(int&, int, char
             return CONTINUE;
         }
     },
+    {"-f", [](int& i, int argc, char** argv, config_t& config)
+        {
+            if(++i < argc) {
+                config.fps = atoi(argv[i]);
+                if(std::to_string(config.fps) != argv[i])
+                    return ERROR;
+            } else
+                return ERROR;
+            return CONTINUE;
+        }
+    },
     {"-l", [](int&, int, char**, config_t& config)
         {
             config.loop = true;
@@ -338,8 +355,9 @@ static std::unordered_map<std::string, std::function<Interrupt_t(int&, int, char
         {
             if(++i < argc) {
                 int p = atoi(argv[i]);
-                if(p < 0)
+                if(p < 0) {
                     return ERROR;
+                }
                 config.pad = (uint8_t)p;
                 if(std::to_string(config.pad) != argv[i])
                     return ERROR;
@@ -351,8 +369,12 @@ static std::unordered_map<std::string, std::function<Interrupt_t(int&, int, char
     {"--help", [](int&, int, char**, config_t&)
         {
             std::cout << "usage: ttydisp [options] <filename>\n"
-                << "    -h, --help:\n"
+                << "    --help:\n"
                 << "        Show this help message\n"
+                << "    -l:\n"
+                << "        Enable looping\n"
+                << "    -p:\n"
+                << "        Set brightness padding\n"
                 << "    -v, --verbose:\n"
                 << "        Enable verbose logging\n"
                 << "    -w, --width:\n"
@@ -425,7 +447,7 @@ std::pair<bool, config_t> parseArguments(int argc, char** argv) {
             switch(func->second(i, argc, argv, config)) {
                 // check interrupt type
                 case ERROR:
-                    std::cerr << "Fatal error thrown in argument parser" << std::endl;
+                    std::cerr << "Fatal error thrown while parsing argument " << func->first << std::endl;
                 case HALT:
                     return {false, config};
                 default:
@@ -480,7 +502,10 @@ void log(void*, int level, const char *fmt, va_list vargs) {
 
 int main(int argc, char** argv) {
     av_log_set_callback(log);
-    auto [success, config] = parseArguments(argc, argv);
+    std::pair res = parseArguments(argc, argv);
+    int success = res.first;
+    config = res.second;
+
     if(!success) {
         logger.dump(std::cerr);
         return 1;
@@ -519,7 +544,7 @@ int main(int argc, char** argv) {
 
     int ret;
     do {
-        ret = stream.display(config);
+        ret = stream.display();
         av_seek_frame(stream.getFormatContext(), -1, 0, AVSEEK_FLAG_FRAME);
     } while(config.loop && !ret && !stop);
 
