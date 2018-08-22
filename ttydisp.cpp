@@ -96,14 +96,18 @@ class Stream {
             printf("\x1B[F");
     }
     AVFrame* convert(AVFrame* frame, unsigned width, unsigned height) {
-        av.swsContext = sws_getCachedContext(av.swsContext, frame->width, frame->height, (AVPixelFormat)frame->format, width, height, AV_PIX_FMT_YUV420P, SWS_BICUBIC, NULL, NULL, NULL);
+        // We don't use YUV because it introduces artefacts in the final image
+        // av.swsContext = sws_getCachedContext(av.swsContext, frame->width, frame->height, (AVPixelFormat)frame->format, width, height, AV_PIX_FMT_YUV420P, SWS_BICUBIC, NULL, NULL, NULL);
+        av.swsContext = sws_getCachedContext(av.swsContext, frame->width, frame->height, (AVPixelFormat)frame->format, width, height, AV_PIX_FMT_RGB24, SWS_BICUBIC, NULL, NULL, NULL);
         logger.log("Scaling to dims " + std::to_string(width) + ", " + std::to_string(height));
         AVFrame *nframe = av_frame_alloc();
         nframe->width = width;
         nframe->height = height;
-        unsigned nb = av_image_get_buffer_size(AV_PIX_FMT_YUV420P, width, height, 1);
+        // unsigned nb = av_image_get_buffer_size(AV_PIX_FMT_YUV420P, width, height, 1);
+        unsigned nb = av_image_get_buffer_size(AV_PIX_FMT_RGB24, width, height, 1);
         auto buffer = (uint8_t*)av_malloc(nb * sizeof(uint8_t));
-        av_image_fill_arrays(nframe->data, nframe->linesize, buffer, AV_PIX_FMT_YUV420P, width, height, 1);
+        // av_image_fill_arrays(nframe->data, nframe->linesize, buffer, AV_PIX_FMT_YUV420P, width, height, 1);
+        av_image_fill_arrays(nframe->data, nframe->linesize, buffer, AV_PIX_FMT_RGB24, width, height, 1);
         sws_scale(av.swsContext, (uint8_t**)frame->data, frame->linesize, 0, frame->height, (uint8_t**)nframe->data, nframe->linesize);
         return nframe;
     }
@@ -115,6 +119,7 @@ class Stream {
         // return;
         for(y = 0; y < height; ++y) {
             for(x = 0; x < width; ++x) {
+                /*
                 // YUV
                 uint8_t Y = frame->data[0][y * frame->linesize[0] + x];
                 uint8_t U = frame->data[1][y/2 * frame->linesize[1] + x/2];
@@ -124,9 +129,15 @@ class Stream {
                 const uint8_t r = Y + 1.402*(V-128);
                 const uint8_t g = Y - 0.344*(U-128) - 0.714*(V-128);
                 const uint8_t b = Y + 1.772*(U-128);
+                */
+                const uint8_t r = frame->data[0][0 + 3 * (x + y * width)];
+                const uint8_t g = frame->data[0][1 + 3 * (x + y * width)];
+                const uint8_t b = frame->data[0][2 + 3 * (x + y * width)];
 
                 auto ansiColor = generateANSIColor(r, g, b, pad);
+
                 printf(COLOR_FORMAT, ansiColor);
+                // printf("%d %d %d (%d %d %d)\n", x, y, ansiColor, r, g, b);
             }
             printf(COLOR_RESET);
 
