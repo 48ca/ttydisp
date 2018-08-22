@@ -33,6 +33,8 @@ static Logger logger(of);
 
 static bool stop = false;
 
+static const bool istty = isatty(fileno(stdout));
+
 #define COLOR_TEXT_FORMAT "\x1B[48;05;%um\x1B[38;05;%um%c"
 #define COLOR_FORMAT "\x1B[48;05;%um "
 #define COLOR_RESET "\x1B[0m"
@@ -290,8 +292,10 @@ class Stream {
                             std::chrono::duration_cast<std::chrono::milliseconds>(n - stopt).count()
                             ) + "ms");
             }
-            std::this_thread::sleep_until(stopt);
-            while(stopt + std::chrono::nanoseconds((int)SPINLOCK_NS) > clk::now()); // accurate waiting
+            if(istty) {
+                std::this_thread::sleep_until(stopt);
+                while(stopt + std::chrono::nanoseconds((int)SPINLOCK_NS) > clk::now()); // accurate waiting
+            }
             if(config.verbose) {
                 n = clk::now();
                 std::cout << "\n file: " + config.filename + " | fps (des): " + std::to_string(1.0/wait_time())
@@ -476,7 +480,7 @@ std::pair<bool, config_t> parseArguments(int argc, char** argv) {
         }
     }
 
-    if(!isatty(fileno(stdout))) {
+    if(!istty) {
         if(config.height < 0 && config.width < 0) {
             logger.log("Output is not a terminal, so custom dimensions must be set");
             return {false, config};
