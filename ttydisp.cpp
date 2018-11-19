@@ -45,7 +45,7 @@ typedef struct {
     int height = -1;
     int width = -1;
     bool loop = false;
-    uint8_t pad = 35;
+    uint8_t pad = 0;
     uint16_t fps = 0;
 } config_t;
 
@@ -61,10 +61,10 @@ std::pair<unsigned/*width*/, unsigned/*height*/> getTTYDimensions(void) {
 class Stream {
   private:
     struct av {
-        AVCodec* codec = nullptr;
-        AVCodecContext* codecContext = nullptr;
-        AVFormatContext* formatContext = nullptr;
-        AVDictionary* dict = nullptr;
+        AVCodec *codec = nullptr;
+        AVCodecContext *codecContext = nullptr;
+        AVFormatContext *formatContext = nullptr;
+        AVDictionary *dict = nullptr;
         struct SwsContext *swsContext = nullptr;
         int videoStreamIndex = -1;
     } av;
@@ -84,10 +84,8 @@ class Stream {
         g = g >= pad ? g - pad : 0;
         b = b >= pad ? b - pad : 0;
         if(abs(r - g) <= GREY_DIFF && abs(r - b) <= GREY_DIFF && abs(b - g) <= GREY_DIFF) {
-            int t = r + g + b;
-            r = t/3;
-            g = r;
-            b = r;
+            int t = 8 * (r + g + b); // 24 grayscale colors
+            return 232 + lround(t/255);
         }
         return 16 + (36 * lround(r*5.0/255)) + (6 * lround(g*5.0/255)) + lround(b*5.0/255);
     }
@@ -163,6 +161,9 @@ class Stream {
             logger.log(error);
             return 1;
         }
+        std::cout << "test\n";
+        // avformat_find_stream_info(av.formatContext, NULL);
+        std::cout << "pass\n";
         if(avformat_find_stream_info(av.formatContext, NULL) < 0) {
             logger.log("Error finding stream info");
             return 1;
@@ -256,7 +257,7 @@ class Stream {
 
             auto height = config.height < 0 ? tty_height : config.height;
             auto width  = config.width  < 0 ? tty_width  : config.width;
-            float aspect = (float)(frame->height)/frame->width / 2;
+            float aspect = (float)(frame->height)/frame->width * PIXEL_ASPECT_RATIO;
             if(config.height < 0 && config.width < 0) {
                 if((unsigned)round(aspect * width) > height) {
                     // width is too great
@@ -329,6 +330,9 @@ done:
     }
     ~Stream(void) {
         logger.log("Destructing stream");
+        if(av.formatContext) {
+            avformat_close_input(&av.formatContext);
+        }
         if(av.codec != nullptr) {
             avcodec_close(av.codecContext);
             // av_free(av.codec);
@@ -390,11 +394,11 @@ static std::unordered_map<std::string, std::function<Interrupt_t(int&, int, char
                 << "        Enable looping\n"
                 << "    -p:\n"
                 << "        Set brightness padding\n"
-                << "    -v, --verbose:\n"
+                << "    -v\n"
                 << "        Enable verbose logging\n"
-                << "    -w, --width:\n"
+                << "    -w\n"
                 << "        Set output width\n"
-                << "    -h, --height:\n"
+                << "    -h\n"
                 << "        Set output height\n";
             return HALT;
         }
@@ -526,7 +530,7 @@ int main(int argc, char** argv) {
         return 1;
     }
     if(config.verbose) {
-        // av_log_set_level(AV_LOG_DEBUG);
+        av_log_set_level(AV_LOG_DEBUG);
         logger.verbose = true;
     }
 
@@ -540,6 +544,7 @@ int main(int argc, char** argv) {
     logger.log("Starting reading");
 
     int err = stream.readFormat(config.verbose);
+    std::cout << "done reading\n";
     if(err) {
         std::cerr << "Error reading video format" << '\n';
         logger.dump(std::cerr);

@@ -6,3 +6,6 @@
 #define SPINLOCK_NS 1E6
 
 #define GREY_DIFF 15
+
+// width / height
+#define PIXEL_ASPECT_RATIO .5

@@ -16,19 +16,20 @@ class Logger {
     Logger(std::ostream& o) : out(o) { };
     ~Logger(void) { };
 
-    bool verbose = true; // default to true
+    bool verbose = false;
 
     void log(std::string msg) {
         std::lock_guard<std::mutex> lock(mutex);
 
-        if(verbose) {
-            auto now = std::chrono::system_clock::now();
-            std::time_t now_c = std::chrono::system_clock::to_time_t(now);
-            auto timestr = std::put_time(std::localtime(&now_c), "%T");
+        auto now = std::chrono::system_clock::now();
+        std::time_t now_c = std::chrono::system_clock::to_time_t(now);
+        auto timestr = std::put_time(std::localtime(&now_c), "%T");
 
-            out      << '[' << timestr << "] " << msg << std::endl;
-            messages << '[' << timestr << "] " << msg << '\n';
-        }
+        messages << '[' << timestr << "] " << msg << '\n';
+
+        if(verbose)
+            out << '[' << timestr << "] " << msg << std::endl;
+
     };
 
     void dump(std::ostream& o) {
