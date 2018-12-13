@@ -84,8 +84,8 @@ class Stream {
         g = g >= pad ? g - pad : 0;
         b = b >= pad ? b - pad : 0;
         if(abs(r - g) <= GREY_DIFF && abs(r - b) <= GREY_DIFF && abs(b - g) <= GREY_DIFF) {
-            int t = 8 * (r + g + b); // 24 grayscale colors
-            return 232 + lround(t/255);
+            float t = 23 * (r + g + b)/3; // 24 grayscale colors
+            return 232 + roundf(t/255);
         }
         return 16 + (36 * lround(r*5.0/255)) + (6 * lround(g*5.0/255)) + lround(b*5.0/255);
     }
@@ -96,7 +96,9 @@ class Stream {
     AVFrame* convert(AVFrame* frame, unsigned width, unsigned height) {
         // We don't use YUV because it introduces artefacts in the final image
         // av.swsContext = sws_getCachedContext(av.swsContext, frame->width, frame->height, (AVPixelFormat)frame->format, width, height, AV_PIX_FMT_YUV420P, SWS_BICUBIC, NULL, NULL, NULL);
-        av.swsContext = sws_getCachedContext(av.swsContext, frame->width, frame->height, (AVPixelFormat)frame->format, width, height, AV_PIX_FMT_RGB24, SWS_BICUBIC, NULL, NULL, NULL);
+        // av.swsContext = sws_getCachedContext(av.swsContext, frame->width, frame->height, (AVPixelFormat)frame->format, width, height, AV_PIX_FMT_RGB24, SWS_BICUBIC, NULL, NULL, NULL);
+        av.swsContext = sws_getContext(frame->width, frame->height, (AVPixelFormat)frame->format, width, height, AV_PIX_FMT_RGB24, SWS_BICUBIC, NULL, NULL, NULL);
+        logger.log("DONE");
         logger.log("Scaling to dims " + std::to_string(width) + ", " + std::to_string(height));
         AVFrame *nframe = av_frame_alloc();
         nframe->width = width;
@@ -161,9 +163,7 @@ class Stream {
             logger.log(error);
             return 1;
         }
-        std::cout << "test\n";
         // avformat_find_stream_info(av.formatContext, NULL);
-        std::cout << "pass\n";
         if(avformat_find_stream_info(av.formatContext, NULL) < 0) {
             logger.log("Error finding stream info");
             return 1;
@@ -394,11 +394,11 @@ static std::unordered_map<std::string, std::function<Interrupt_t(int&, int, char
                 << "        Enable looping\n"
                 << "    -p:\n"
                 << "        Set brightness padding\n"
-                << "    -v\n"
+                << "    -v:\n"
                 << "        Enable verbose logging\n"
-                << "    -w\n"
+                << "    -w:\n"
                 << "        Set output width\n"
-                << "    -h\n"
+                << "    -h:\n"
                 << "        Set output height\n";
             return HALT;
         }
@@ -544,7 +544,6 @@ int main(int argc, char** argv) {
     logger.log("Starting reading");
 
     int err = stream.readFormat(config.verbose);
-    std::cout << "done reading\n";
     if(err) {
         std::cerr << "Error reading video format" << '\n';
         logger.dump(std::cerr);
