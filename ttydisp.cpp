@@ -83,11 +83,25 @@ class Stream {
         r = r >= pad ? r - pad : 0;
         g = g >= pad ? g - pad : 0;
         b = b >= pad ? b - pad : 0;
-        if(abs(r - g) <= GREY_DIFF && abs(r - b) <= GREY_DIFF && abs(b - g) <= GREY_DIFF) {
-            float t = 23 * (r + g + b)/3; // 24 grayscale colors
-            return 232 + roundf(t/255);
+        float t = (0.21 * r + 0.72 * g + 0.07 * b); // 24 grayscale colors
+        uint8_t g_rawlum = lround(t * 23.0/255); // int 0-24
+        uint8_t r_rawval = lround(r * 5.0/255);  // int 0-6
+        uint8_t g_rawval = lround(g * 5.0/255);
+        uint8_t b_rawval = lround(b * 5.0/255);
+
+        float g_lum = g_rawlum * 255/23.0;
+        float r_val = r_rawval * 255/5.0;
+        float g_val = g_rawval * 255/5.0;
+        float b_val = b_rawval * 255/5.0;
+
+        float g_score = fabs(r - g_lum) + fabs(g - g_lum) + fabs(b - g_lum);
+        float c_score = fabs(r - r_val) + fabs(g - g_val) + fabs(b - b_val);
+
+        if(c_score < g_score - COLOR_BIAS) {
+            return 16 + (36 * r_rawval) + (6 * g_rawval) + b_rawval;
+        } else {
+            return 232 + g_rawlum;
         }
-        return 16 + (36 * lround(r*5.0/255)) + (6 * lround(g*5.0/255)) + lround(b*5.0/255);
     }
     void resetFrame(unsigned height) {
         for(unsigned i = 0; i < height - 1; ++i)
