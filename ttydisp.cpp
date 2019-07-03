@@ -8,6 +8,8 @@
 #include <chrono>
 #include <csignal>
 
+#include "colors.h"
+
 #ifndef AV_ERROR_MAX_STRING_SIZE
 #define AV_ERROR_MAX_STRING_SIZE 64
 #endif
@@ -47,6 +49,7 @@ typedef struct {
     bool loop = false;
     uint8_t pad = 0;
     uint16_t fps = 0;
+    bool accurate_colors = true;
 } config_t;
 
 static config_t config;
@@ -80,12 +83,15 @@ class Stream {
         return av_q2d(r) * std::max(av.codecContext->ticks_per_frame, 1);
     }
     unsigned char generateANSIColor(uint8_t r, uint8_t g, uint8_t b, uint8_t pad) {
+        if(config.accurate_colors)
+            return get_closest_color((r << 16) + (g << 8) + b);
+
         r = r >= pad ? r - pad : 0;
         g = g >= pad ? g - pad : 0;
         b = b >= pad ? b - pad : 0;
-        float t = (0.21 * r + 0.72 * g + 0.07 * b); // 24 grayscale colors
-        uint8_t g_rawlum = lround(t * 23.0/255); // int 0-24
-        uint8_t r_rawval = lround(r * 5.0/255);  // int 0-6
+        float t = (r + g + b)/3.0; // 24 grayscale colors
+        uint8_t g_rawlum = lround(t * 23.0/255);
+        uint8_t r_rawval = lround(r * 5.0/255);
         uint8_t g_rawval = lround(g * 5.0/255);
         uint8_t b_rawval = lround(b * 5.0/255);
 
@@ -97,7 +103,7 @@ class Stream {
         float g_score = fabs(r - g_lum) + fabs(g - g_lum) + fabs(b - g_lum);
         float c_score = fabs(r - r_val) + fabs(g - g_val) + fabs(b - b_val);
 
-        if(c_score < g_score - COLOR_BIAS) {
+        if(c_score < g_score - COLOR_BIAS || g_rawlum == 1) {
             return 16 + (36 * r_rawval) + (6 * g_rawval) + b_rawval;
         } else {
             return 232 + g_rawlum;
@@ -151,6 +157,7 @@ class Stream {
                 auto ansiColor = generateANSIColor(r, g, b, pad);
 
                 printf(COLOR_FORMAT, ansiColor);
+                // printf(COLOR_TEXT_FORMAT, ansiColor, 0, ansiColor >= 232 ? 'g' : 'c');
                 // printf("%d %d %d (%d %d %d)\n", x, y, ansiColor, r, g, b);
             }
             printf(COLOR_RESET);
@@ -384,6 +391,12 @@ static std::unordered_map<std::string, std::function<Interrupt_t(int&, int, char
             return CONTINUE;
         }
     },
+    {"-fc", [](int&, int, char**, config_t& config)
+        {
+            config.accurate_colors = false;
+            return CONTINUE;
+        }
+    },
     {"-p", [](int& i, int argc, char** argv, config_t& config)
         {
             if(++i < argc) {
@@ -406,6 +419,8 @@ static std::unordered_map<std::string, std::function<Interrupt_t(int&, int, char
                 << "        Show this help message\n"
                 << "    -l:\n"
                 << "        Enable looping\n"
+                << "    -fc:\n"
+                << "        Disable accurate colors (might be faster)\n"
                 << "    -p:\n"
                 << "        Set brightness padding\n"
                 << "    -v:\n"
