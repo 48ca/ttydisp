@@ -25,6 +25,7 @@ extern "C"
 #include <stdio.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
+#include "termios.h"
 }
 
 #include "conf.h"
@@ -103,7 +104,7 @@ class Stream {
         float g_score = fabs(r - g_lum) + fabs(g - g_lum) + fabs(b - g_lum);
         float c_score = fabs(r - r_val) + fabs(g - g_val) + fabs(b - b_val);
 
-        if(c_score < g_score - COLOR_BIAS || g_rawlum == 1) {
+        if(c_score < g_score + COLOR_BIAS) {
             return 16 + (36 * r_rawval) + (6 * g_rawval) + b_rawval;
         } else {
             return 232 + g_rawlum;
@@ -548,7 +549,25 @@ void log(void*, int level, const char *fmt, va_list vargs) {
     }
 }
 
+struct termios saved;
+
+void restore(void) {
+    tcsetattr(STDIN_FILENO, TCSANOW, &saved);
+}
+
+void disable_echo() {
+    struct termios attributes;
+
+    tcgetattr(STDIN_FILENO, &saved);
+    atexit(restore);
+
+    tcgetattr(STDIN_FILENO, &attributes);
+    attributes.c_lflag &= ~ ECHO;
+    tcsetattr(STDIN_FILENO, TCSAFLUSH, &attributes);
+}
+
 int main(int argc, char** argv) {
+    disable_echo();
     av_log_set_callback(log);
     std::pair res = parseArguments(argc, argv);
     int success = res.first;
